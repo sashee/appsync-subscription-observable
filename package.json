@@ -1,36 +1,36 @@
 {
   "name": "appsync-subscription-observable",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AppSync subscription implementation with RxJs observable",
   "main": "lib.js",
   "type": "module",
-	"keywords": [
-		"appsync",
-		"subscription",
-		"rxjs"
-	],
-	"repository": "github:sashee/appsync-subscription-observable",
+  "keywords": [
+    "appsync",
+    "subscription",
+    "rxjs"
+  ],
+  "repository": "github:sashee/appsync-subscription-observable",
   "scripts": {
     "test": "node test"
   },
-	"files": [
-		"lib.js"
-	],
-	"engines": {
-		"node": ">=19.0.0"
-	},
-	"author": {
-		"name": "Tamas Sallai",
-		"url": "https://advancedweb.hu/"
-	},
+  "files": [
+    "lib.js"
+  ],
+  "engines": {
+    "node": ">=19.0.0"
+  },
+  "author": {
+    "name": "Tamas Sallai",
+    "url": "https://advancedweb.hu/"
+  },
   "license": "ISC",
   "dependencies": {
     "rxjs": "^7.8.0"
   },
-	"devDependencies": {
+  "devDependencies": {
     "get-port": "^6.1.2",
     "node-forge": "^1.3.1",
     "ws": "^8.13.0",
     "lodash": "^4.17.21"
-	}
+  }
 }

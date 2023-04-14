@@ -1,16 +1,22 @@
 {
-  "name": "tester",
+  "name": "appsync-subscription-observable",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "AppSync subscription implementation with RxJs observable",
+  "main": "lib.js",
   "type": "module",
   "scripts": {
     "test": "node test"
   },
+	"files": [
+		"lib.js"
+	],
 	"engines": {
 		"node": ">=19.0.0"
 	},
-  "author": "",
+	"author": {
+		"name": "Tamas Sallai",
+		"url": "https://advancedweb.hu/"
+	},
   "license": "ISC",
   "dependencies": {
     "rxjs": "^7.8.0"

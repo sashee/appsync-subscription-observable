@@ -4,6 +4,12 @@
   "description": "AppSync subscription implementation with RxJs observable",
   "main": "lib.js",
   "type": "module",
+	"keywords": [
+		"appsync",
+		"subscription",
+		"rxjs"
+	],
+	"repository": "github:sashee/appsync-subscription-observable",
   "scripts": {
     "test": "node test"
   },

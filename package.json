@@ -11,7 +11,7 @@
   ],
   "repository": "github:sashee/appsync-subscription-observable",
   "scripts": {
-    "test": "node --import tsx --test src/**/*.test.ts",
+    "test": "node --import tsx --test src/*.test.ts",
     "build": "tsc --build",
     "clean": "tsc --build --clean",
     "prepare": "npm run clean && npm run build"

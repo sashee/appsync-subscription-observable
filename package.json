@@ -1,8 +1,8 @@
 {
   "name": "appsync-subscription-observable",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "AppSync subscription implementation with RxJs observable",
-  "main": "lib.js",
+  "main": "dist/index.js",
   "type": "module",
   "keywords": [
     "appsync",
@@ -11,26 +11,31 @@
   ],
   "repository": "github:sashee/appsync-subscription-observable",
   "scripts": {
-    "test": "node test"
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "build": "tsc --build",
+    "clean": "tsc --build --clean",
+    "prepare": "npm run clean && npm run build"
   },
   "files": [
-    "lib.js"
+    "dist"
   ],
-  "engines": {
-    "node": ">=19.0.0"
-  },
   "author": {
     "name": "Tamas Sallai",
     "url": "https://advancedweb.hu/"
   },
   "license": "ISC",
   "dependencies": {
-    "rxjs": "^7.8.0"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
-    "get-port": "^6.1.2",
+    "@types/node": "^20.12.12",
+    "@types/node-forge": "^1.3.11",
+    "@types/ws": "^8.5.10",
+    "get-port": "^7.1.0",
     "node-forge": "^1.3.1",
-    "ws": "^8.13.0",
-    "lodash": "^4.17.21"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5",
+    "ws": "^8.17.0",
+    "tsx": "^4.10.3"
   }
 }

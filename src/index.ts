@@ -25,24 +25,45 @@ const exponentialBackoffWithJitter = <T> ({base, cap, timeout: timeoutMs, maxAtt
 	}}),
 );
 
+export type AuthHeaders =
+	// API key
+	{host: string, "x-api-key": string} |
+	// OIDC, Lambda
+	{host: string, Authorization: string} |
+	// IAM
+	{
+		host: string,
+		accept: "application/json, text/javascript",
+		"content-encoding": "amz-1.0",
+		"content-type": "application/json; charset=UTF-8",
+		"x-amz-date": string,
+		"X-Amz-Security-Token": string,
+		Authorization: string,
+	}
+;
+
 export type SubscriptionMessages =
-	{type: "start_ack", id: string, payload?: undefined} |
-	{type: "data", id: string, payload: any} |
-	{type: "complete", id: string, payload: undefined} |
-	{type: "error", id?: string, payload?: any, error?: any}
+	{type: "start_ack", id: string} |
+	{type: "data", id: string, payload: object} |
+	{type: "complete", id: string} |
+	{type: "error", id: string, payload: object}
+;
+
+export type SendingWebSocketMessages =
+	{type: "connection_init"} |
+	{type: "stop", id: string} |
+	{type: "start", id: string, payload: {data: string, extensions: {authorization: AuthHeaders}}}
 ;
 
 export type WebSocketMessages =
-	{type: "connection_ack", id?: string, payload: {connectionTimeoutMs: number}} |
+	{type: "connection_ack", payload: {connectionTimeoutMs: number}} |
 	{type: "ka"} |
-	{type: "error", id?: string, payload?: any, error?: any} |
-	{type: "connection_init", id?: undefined, payload?: undefined} |
-	{type: "start", id: string, payload: any} |
-	{type: "error", payload?: any, error?: any}
+	{type: "error", payload: object}
 | SubscriptionMessages
+| SendingWebSocketMessages
 ;
 
-type getAuthorizationHeaders = (args: {connect: boolean, data: {query?: string, variables?: {[name: string]: string}}}) => any | Promise<any>;
+type getAuthorizationHeaders = (args: {connect: boolean, data: {query?: string, variables?: {[name: string]: string}}}) => AuthHeaders | Promise<AuthHeaders>;
 
 export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebSocketCtor}: {APIURL: string, connectionRetryConfig?: RetryConfig, closeDelay?: number, WebSocketCtor: WebSocketSubjectConfig<unknown>["WebSocketCtor"]}) => {
 	// https://github.com/aws-amplify/amplify-js/blob/4988d51a6ffa1215a413c19c80f39a035eb42512/packages/pubsub/src/Providers/AWSAppSyncRealTimeProvider/index.ts#L70
@@ -103,12 +124,12 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 		}),
 	);
 
-	return ({getAuthorizationHeaders, opened, subscriptionRetryConfig}: {getAuthorizationHeaders: getAuthorizationHeaders, opened?: () => void, subscriptionRetryConfig?: RetryConfig}) => (query: string, variables: {[name: string]: string}) => new Observable<WebSocket>((observer) => {
+	return ({getAuthorizationHeaders, opened, subscriptionRetryConfig}: {getAuthorizationHeaders: getAuthorizationHeaders, opened?: () => void, subscriptionRetryConfig?: RetryConfig}) => (query: string, variables: {[name: string]: string}) => new Observable<object>((observer) => {
 		getAuthorizationHeadersSubject.next(getAuthorizationHeaders);
 		const subscriptionId = crypto.randomUUID();
 		const subscription = websockets.pipe(
 			exponentialBackoffWithJitter({base: connectionRetryConfig?.base ?? 10, cap: connectionRetryConfig?.cap ?? 2000, maxAttempts: connectionRetryConfig?.maxAttempts ?? 5, timeout: connectionRetryConfig?.timeout ?? 5000}),
-			(observable) => new Observable<[ws: WebSocketSubject<WebSocketMessages>, authHeaders: any]>((subscriber) => {
+			(observable) => new Observable<[ws: WebSocketSubject<WebSocketMessages>, authHeaders: AuthHeaders]>((subscriber) => {
 				const subscription = observable.subscribe({
 					next: (ws) => {
 						Promise.resolve(getAuthorizationHeaders({connect: false, data: {query, variables}})).then(
@@ -133,11 +154,11 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 								authorization: authHeaders,
 							}
 						}
-					} as const),
+					} as SendingWebSocketMessages),
 					() => ({
 						id: subscriptionId,
 						type: "stop",
-					} as const),
+					} as SendingWebSocketMessages),
 					(message) => "id" in message && message.id === subscriptionId,
 				).pipe(
 					map((msg) => {

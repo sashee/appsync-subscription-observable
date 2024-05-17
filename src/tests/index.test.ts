@@ -1,4 +1,4 @@
-import { RetryConfig, SubscriptionMessages, WebSocketMessages, appsyncRealtime, persistentSubscription } from "./index.js";
+import { AuthHeaders, RetryConfig, WebSocketMessages, appsyncRealtime, persistentSubscription } from "../index.js";
 import {WebSocketServer} from "ws";
 import {createServer} from "node:https";
 import getPort from "get-port";
@@ -40,7 +40,8 @@ const subscriptionQuery = `subscription MySubscription {
 const subscriptionVariables = {};
 
 type ConnectionMessages = {type: "message", message: WebSocketMessages, id?: string} | {type: "error", error?: any, message?: undefined, payload?: string} | {type: "open", id?: string, message?: undefined};
-type Connections = {connectionSubject: Subject<ConnectionMessages>, send: (message: ConnectionMessages | WebSocketMessages) => unknown, url: string | undefined, ws: WebSocket};
+
+type Connections = {connectionSubject: Subject<ConnectionMessages>, send: (message: WebSocketMessages) => unknown, url: string | undefined, ws: WebSocket};
 
 const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (options: {tester: ReturnType<typeof appsyncRealtime>, connections: Subject<Connections>}) => T) => {
 	const port = await getPort();
@@ -63,7 +64,7 @@ const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (o
 		ws.on("open", () => connectionSubject.next({type: "open"}));
 		ws.on("close", () => connectionSubject.complete());
 
-		const send = (message: ConnectionMessages | WebSocketMessages) => {
+		const send = (message: WebSocketMessages) => {
 			debug && (console.log("[tester] ws.send", message));
 			ws.send(JSON.stringify(message));
 		};
@@ -91,8 +92,14 @@ const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (o
 	}
 };
 
+type SubscriptionMessagesWithoutId = 
+	{type: "start_ack"} |
+	{type: "data", payload: object} |
+	{type: "complete"} |
+	{type: "error", payload: object}
+
 const handleConnections = ({connections, newConnection, newSubscription, disableAutoAckConnection, disableAutoAckSubscription}: {connections: Observable<Connections>, newConnection?: (options: {url: string | undefined, connectionSubject: Connections["connectionSubject"], connectionNum: number, ws: WebSocket}) => unknown, newSubscription?: (options: {payload: any, connectionNum: number, subscriptionNum: number, id: string}) => unknown, disableAutoAckConnection?: boolean, disableAutoAckSubscription?: boolean}) => {
-	const openConnections = {} as {[connectionNum: number]: {messages: Array<WebSocketMessages> | {push: (...items: WebSocketMessages[]) => unknown}, connectionSubject: Connections["connectionSubject"], subscriptions: {[subscriptionNum: number]: {messages: Array<Omit<SubscriptionMessages, "id">> | {push: (...items: Omit<SubscriptionMessages, "id">[]) => unknown}}}}};
+	const openConnections = {} as {[connectionNum: number]: {messages: Array<WebSocketMessages> | {push: (...items: WebSocketMessages[]) => unknown}, connectionSubject: Connections["connectionSubject"], subscriptions: {[subscriptionNum: number]: {messages: Array<SubscriptionMessagesWithoutId> | {push: (...items: SubscriptionMessagesWithoutId[]) => unknown}}}}};
 	let numConnections = 0;
 	connections.pipe(
 	).subscribe(({connectionSubject, send, url, ws}) => {
@@ -116,7 +123,7 @@ const handleConnections = ({connections, newConnection, newSubscription, disable
 				const messageQueue = connectionObj.messages;
 				assert(Array.isArray(messageQueue));
 				connectionObj.messages = {push: (...items) => items.forEach((item) => send(item))};
-				messageQueue.forEach((message: ConnectionMessages) => send(message));
+				messageQueue.forEach((message: WebSocketMessages) => send(message));
 			});
 		}else {
 			if (Array.isArray(connectionObj.messages) && connectionObj.messages.length > 0) {
@@ -150,7 +157,7 @@ const handleConnections = ({connections, newConnection, newSubscription, disable
 			openConnections[connectionNum] = openConnections[connectionNum] ?? {messages: [], subscriptions: {}};
 			openConnections[connectionNum].messages.push(message);
 		},
-		sendMessageToSubscription: (connectionNum: number, subscriptionNum: number, message: Omit<SubscriptionMessages, "id">) => {
+		sendMessageToSubscription: (connectionNum: number, subscriptionNum: number, message: SubscriptionMessagesWithoutId) => {
 			openConnections[connectionNum] = openConnections[connectionNum] ?? {messages: [], subscriptions: {}};
 			openConnections[connectionNum].subscriptions[subscriptionNum] = openConnections[connectionNum].subscriptions[subscriptionNum] ?? {messages: []};
 			openConnections[connectionNum].subscriptions[subscriptionNum].messages.push(message);
@@ -192,7 +199,7 @@ const equalityCheck = (source: Observable<any>, expected: any[]) => {
 describe("connection", () => {
 	it("emits an error if failed", {}, async () => {
 		const port = await getPort();
-		const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, WebSocketCtor: WebSocket})({getAuthorizationHeaders: () => ({auth: "header"})})(subscriptionQuery, subscriptionVariables);
+		const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, WebSocketCtor: WebSocket})({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "header"})})(subscriptionQuery, subscriptionVariables);
 
 		assert(await equalityCheck(tester, [{type: "error"}]));
 	});
@@ -202,9 +209,9 @@ describe("connection", () => {
 			const {sendMessageToConnection} = handleConnections({
 				connections,
 			});
-			sendMessageToConnection(0, {type: "error", payload: "test error"});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
-			assert(await equalityCheck(subs, [{type: "error", payload: "test error"}]));
+			sendMessageToConnection(0, {type: "error", payload: {message: "test error"}});
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
+			assert(await equalityCheck(subs, [{type: "error", payload: {message: "test error"}}]));
 		});
 	});
 
@@ -214,7 +221,7 @@ describe("connection", () => {
 				disableAutoAckConnection: true,
 				connections,
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, [{type: "error"}]));
 		});
 	});
@@ -229,12 +236,12 @@ describe("connection", () => {
 						await waitForConnection(2);
 						sendMessageToConnection(2, {type: "connection_ack", payload: {connectionTimeoutMs: 100}});
 						await waitForSubscription(2, 0);
-						sendMessageToSubscription(2, 0, {type: "data", payload: "success"});
+						sendMessageToSubscription(2, 0, {type: "data", payload: {message: "success"}});
 					}
 				},
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
-			assert(await equalityCheck(subs, [{type: "data", payload: "success"}]));
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
+			assert(await equalityCheck(subs, [{type: "data", payload: {message: "success"}}]));
 		});
 	});
 
@@ -244,13 +251,13 @@ describe("connection", () => {
 				connections,
 				newConnection: async ({ws}) => {
 					await waitForSubscription(0, 0);
-					sendMessageToSubscription(0, 0, {type: "data", payload: "success"});
+					sendMessageToSubscription(0, 0, {type: "data", payload: {message: "success"}});
 					await setTimeout(100);
 					ws.close();
 				}
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
-			assert(await equalityCheck(subs, [{type: "data", payload: "success"}]));
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
+			assert(await equalityCheck(subs, [{type: "data", payload: {message: "success"}}]));
 		});
 	});
 
@@ -264,7 +271,7 @@ describe("connection", () => {
 					sendMessageToConnection(0, {type: "connection_ack", payload: {connectionTimeoutMs: 100}});
 				}
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, []));
 		});
 	});
@@ -291,7 +298,7 @@ describe("connection", () => {
 					shouldFinish = true;
 				}
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, []));
 			assert(shouldFinish);
 		});
@@ -301,9 +308,9 @@ describe("connection", () => {
 			const newConnection = mock.fn(() => {});
 			const newSubscription = mock.fn(({payload, subscriptionNum}) => {
 				if (subscriptionNum === 0) {
-					assert.deepStrictEqual(payload.extensions, {authorization: {subscription: "1"}});
+					assert.deepStrictEqual(payload.extensions, {authorization: {host: "example.com", Authorization: "1"}});
 				}else if (subscriptionNum === 1) {
-					assert.deepStrictEqual(payload.extensions, {authorization: {subscription: "2"}});
+					assert.deepStrictEqual(payload.extensions, {authorization: {host: "example.com", Authorization: "2"}});
 				}else {
 					throw new Error("Unexpected subscription");
 				}
@@ -315,11 +322,11 @@ describe("connection", () => {
 			});
 			const subs1 = new ReplaySubject();
 			const subs2 = new ReplaySubject();
-			tester({getAuthorizationHeaders: () => ({subscription: "1"})})(subscriptionQuery, subscriptionVariables).subscribe(subs1);
+			tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "1"})})(subscriptionQuery, subscriptionVariables).subscribe(subs1);
 			sendMessageToSubscription(0, 0, {type: "data", payload: {data: "result"}});
 			await setTimeout(100);
 			assert.equal(newSubscription.mock.callCount(), 1);
-			tester({getAuthorizationHeaders: () => ({subscription: "2"})})(subscriptionQuery, subscriptionVariables).subscribe(subs2);
+			tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "2"})})(subscriptionQuery, subscriptionVariables).subscribe(subs2);
 			await setTimeout(100);
 			sendMessageToSubscription(0, 0, {type: "complete"});
 			sendMessageToSubscription(0, 1, {type: "complete"});
@@ -340,7 +347,7 @@ describe("connection", () => {
 				newConnection,
 			});
 			const subs1 = new ReplaySubject();
-			tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables).subscribe(subs1);
+			tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).subscribe(subs1);
 			await waitForConnection(0);
 			sendMessageToSubscription(0, 0, {type: "complete"});
 			// connection is complete
@@ -359,14 +366,14 @@ describe("connection", () => {
 				newConnection,
 			});
 			const subs1 = new ReplaySubject();
-			tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables).subscribe(subs1);
+			tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).subscribe(subs1);
 			await waitForConnection(0);
 			sendMessageToSubscription(0, 0, {type: "complete"});
 			assert.equal(newConnection.mock.callCount(), 1);
 			assert(connection);
 			await lastValueFrom(connection);
 			const subs2 = new ReplaySubject();
-			tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables).subscribe(subs2);
+			tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).subscribe(subs2);
 			await waitForConnection(1);
 			sendMessageToSubscription(1, 0, {type: "complete"});
 			assert.equal(newConnection.mock.callCount(), 2);
@@ -376,7 +383,7 @@ describe("connection", () => {
 });
 
 describe("auth headears", () => {
-	test("sends the authorization headers for both the connection and the subscription", {}, async () => {
+	it("sends the authorization headers for both the connection and the subscription", {}, async () => {
 		await withTestSetup()(async ({tester, connections}) => {
 			const newConnection = mock.fn(({url}) => {
 				const parsed = new URL(url, "https://example.com");
@@ -388,11 +395,11 @@ describe("auth headears", () => {
 				assert(payloadValue);
 				const payload = Buffer.from(payloadValue, "base64").toString();
 				assert.equal(payload, "{}");
-				assert.deepStrictEqual(header, {test: "authheader", connect: true, data: {}});
+				assert.deepStrictEqual(header, {host: "example.com", Authorization: "authheader true {}"});
 			});
 
 			const newSubscription = mock.fn(({payload}) => {
-				assert.deepStrictEqual(payload.extensions, {authorization: {test: "authheader", connect: false, data: JSON.parse(payload.data)}});
+				assert.deepStrictEqual(payload.extensions, {authorization: {host: "example.com", Authorization: `authheader false ${payload.data}`}});
 			});
 
 			const {sendMessageToSubscription} = handleConnections({
@@ -400,7 +407,7 @@ describe("auth headears", () => {
 				newConnection,
 				newSubscription,
 			})
-			const subs = tester({getAuthorizationHeaders: ({connect, data}) => ({test: "authheader", connect, data})})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: ({connect, data}) => ({host: "example.com", Authorization: `authheader ${connect} ${JSON.stringify(data)}`})})(subscriptionQuery, subscriptionVariables);
 			sendMessageToSubscription(0, 0, {type: "complete"});
 			assert(await equalityCheck(subs, []));
 			assert.equal(newConnection.mock.callCount(), 1);
@@ -419,11 +426,11 @@ describe("auth headears", () => {
 				assert(payloadValue);
 				const payload = Buffer.from(payloadValue, "base64").toString();
 				assert.equal(payload, "{}");
-				assert.deepStrictEqual(header, {test: "authheader", connect: true, data: {}});
+				assert.deepStrictEqual(header, {host: "example.com", Authorization: "authheader true {}"});
 			});
 
 			const newSubscription = mock.fn(({payload}) => {
-				assert.deepStrictEqual(payload.extensions, {authorization: {test: "authheader", connect: false, data: JSON.parse(payload.data)}});
+				assert.deepStrictEqual(payload.extensions, {authorization: {host: "example.com", Authorization: `authheader false ${payload.data}`}});
 			});
 
 			const {sendMessageToSubscription} = handleConnections({
@@ -431,7 +438,7 @@ describe("auth headears", () => {
 				newConnection,
 				newSubscription,
 			})
-			const subs = tester({getAuthorizationHeaders: ({connect, data}) => ({test: "authheader", connect, data})})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: ({connect, data}) => ({host: "example.com", Authorization: `authheader ${connect} ${JSON.stringify(data)}`})})(subscriptionQuery, subscriptionVariables);
 			sendMessageToSubscription(0, 0, {type: "complete"});
 			assert(await equalityCheck(subs, []));
 
@@ -445,13 +452,13 @@ describe("auth headears", () => {
 				assert(payloadValue);
 				const payload = Buffer.from(payloadValue, "base64").toString();
 				assert.equal(payload, "{}");
-				assert.deepStrictEqual(header, {test: "authheader2", connect: true, data: {}});
+				assert.deepStrictEqual(header, {host: "example.com", Authorization: "authheader2 true {}"});
 			});
 
 			newSubscription.mock.mockImplementation(({payload}) => {
-				assert.deepStrictEqual(payload.extensions, {authorization: {test: "authheader2", connect: false, data: JSON.parse(payload.data)}});
+				assert.deepStrictEqual(payload.extensions, {authorization: {host: "example.com", Authorization: `authheader2 false ${payload.data}`}});
 			});
-			const subs2 = tester({getAuthorizationHeaders: ({connect, data}) => ({test: "authheader2", connect, data})})(subscriptionQuery, subscriptionVariables);
+			const subs2 = tester({getAuthorizationHeaders: ({connect, data}) => ({host: "example.com", Authorization: `authheader2 ${connect} ${JSON.stringify(data)}`})})(subscriptionQuery, subscriptionVariables);
 			sendMessageToSubscription(1, 0, {type: "complete"});
 			assert(await equalityCheck(subs2, []));
 		});
@@ -463,7 +470,7 @@ describe("auth headears", () => {
 				connections,
 				newConnection,
 			});
-			const subs = tester({getAuthorizationHeaders: () => setTimeout(200).then(() => ({auth: "1"}))})(subscriptionQuery, subscriptionVariables).subscribe({next: (e) => console.log(e)});
+			const subs = tester({getAuthorizationHeaders: () => setTimeout<AuthHeaders>(200).then(() => ({host: "example.com", Authorization: "1"}))})(subscriptionQuery, subscriptionVariables).subscribe({next: (e) => console.log(e)});
 			await setTimeout(100);
 			subs.unsubscribe();
 			await setTimeout(150);
@@ -479,7 +486,7 @@ describe("auth headears", () => {
 				newConnection,
 				newSubscription,
 			});
-			const subs = tester({getAuthorizationHeaders: ({connect}) => setTimeout(connect ? 0 : 200).then(() => ({auth: "1"}))})(subscriptionQuery, subscriptionVariables).subscribe({next: (e) => console.log(e)});
+			const subs = tester({getAuthorizationHeaders: ({connect}) => setTimeout<AuthHeaders>(connect ? 0 : 200).then(() => ({host: "example.com", Authorization: "1"}))})(subscriptionQuery, subscriptionVariables).subscribe({next: (e) => console.log(e)});
 			await setTimeout(100);
 			subs.unsubscribe();
 			await setTimeout(150);
@@ -501,7 +508,7 @@ describe("auth headears", () => {
 			handleConnections({
 				connections,
 			});
-			const subs = tester({getAuthorizationHeaders: ({connect}) => connect ? Promise.resolve({test: "headers"}) : Promise.reject(), subscriptionRetryConfig: {maxAttempts: 1}})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: ({connect}) => connect ? Promise.resolve({host: "example.com", Authorization: "headers"}) : Promise.reject<AuthHeaders>(), subscriptionRetryConfig: {maxAttempts: 1}})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, [{type: "error"}]));
 		});
 	});
@@ -519,7 +526,7 @@ describe("auth headears", () => {
 			handleConnections({
 				connections,
 			});
-			const subs = tester({getAuthorizationHeaders: ({connect}) => connect ? Promise.resolve({test: "headers"}) : setTimeout(200).then(() => Promise.reject()), subscriptionRetryConfig: {maxAttempts: 1, timeout: 100}})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: ({connect}) => connect ? Promise.resolve({host: "example.com", Authorization: "headers"}) : setTimeout<AuthHeaders>(200).then(() => Promise.reject()), subscriptionRetryConfig: {maxAttempts: 1, timeout: 100}})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, [{type: "error"}]));
 		});
 	});
@@ -532,7 +539,7 @@ describe("subscription", () => {
 				disableAutoAckSubscription: true,
 				connections,
 			});
-			const subs = tester({getAuthorizationHeaders: () => null, subscriptionRetryConfig: {maxAttempts: 1, timeout: 50}})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"}), subscriptionRetryConfig: {maxAttempts: 1, timeout: 50}})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, [{type: "error"}]));
 		});
 	});
@@ -545,13 +552,13 @@ describe("subscription", () => {
 					if (subscriptionNum === 2) {
 						await waitForSubscription(0, 2);
 						sendMessageToSubscription(0, 2, {type: "start_ack"});
-						sendMessageToSubscription(0, 2, {type: "data", payload: "success"});
+						sendMessageToSubscription(0, 2, {type: "data", payload: {message: "success"}});
 						sendMessageToSubscription(0, 2, {type: "complete"});
 					}
 				},
 			});
-			const subs = tester({getAuthorizationHeaders: () => null, subscriptionRetryConfig: {maxAttempts:3, timeout: 50}})(subscriptionQuery, subscriptionVariables);
-			assert(await equalityCheck(subs, [{type: "data", payload: "success"}]));
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"}), subscriptionRetryConfig: {maxAttempts:3, timeout: 50}})(subscriptionQuery, subscriptionVariables);
+			assert(await equalityCheck(subs, [{type: "data", payload: {message: "success"}}]));
 		});
 	});
 	it("retries the subscrition if there was an error instead of an ack", {}, async () => {
@@ -563,17 +570,17 @@ describe("subscription", () => {
 					if (subscriptionNum === 2) {
 						await waitForSubscription(0, 2);
 						sendMessageToSubscription(0, 2, {type: "start_ack"});
-						sendMessageToSubscription(0, 2, {type: "data", payload: "success"});
+						sendMessageToSubscription(0, 2, {type: "data", payload: {message: "success"}});
 						sendMessageToSubscription(0, 2, {type: "complete"});
 					}else {
 						await waitForSubscription(0, subscriptionNum);
-						sendMessageToSubscription(0, subscriptionNum, {type: "error", payload: "error"});
+						sendMessageToSubscription(0, subscriptionNum, {type: "error", payload: {message: "error"}});
 					}
 				},
 			});
-			const subs = tester({getAuthorizationHeaders: () => null, subscriptionRetryConfig: {maxAttempts:3, timeout: 200}})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "a"}), subscriptionRetryConfig: {maxAttempts:3, timeout: 200}})(subscriptionQuery, subscriptionVariables);
 			await Promise.race([
-				(async () => assert(await equalityCheck(subs, [{type: "data", payload: "success"}])))(),
+				(async () => assert(await equalityCheck(subs, [{type: "data", payload: {message: "success"}}])))(),
 				setTimeout(100).then(() => {throw new Error("Should have finished already")}),
 			]);
 			;
@@ -584,7 +591,7 @@ describe("subscription", () => {
 			const {sendMessageToSubscription} = handleConnections({
 				connections,
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables);
 			sendMessageToSubscription(0, 0, {type: "data", payload: {data: "result"}});
 			sendMessageToSubscription(0, 0, {type: "complete"});
 			assert(await equalityCheck(subs, [{type: "data", payload: {data: "result"}}]));
@@ -596,7 +603,7 @@ describe("subscription", () => {
 				connections,
 			});
 			const complete = mock.fn(() => {});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables).pipe(shareReplay());
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).pipe(shareReplay());
 			subs.subscribe(({
 				complete,
 			}));
@@ -612,15 +619,15 @@ describe("subscription", () => {
 				connections,
 			});
 			const error = mock.fn((_e) => {});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables).pipe(shareReplay());
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).pipe(shareReplay());
 			subs.subscribe(({
 				error,
 			}));
 			sendMessageToSubscription(0, 0, {type: "data", payload: {data: "result"}});
-			sendMessageToSubscription(0, 0, {type: "error", payload: "test error"});
-			assert(await equalityCheck(subs, [{type: "data", payload: {data: "result"}}, {type: "error", payload: "test error"}]));
+			sendMessageToSubscription(0, 0, {type: "error", payload: {message: "test error"}});
+			assert(await equalityCheck(subs, [{type: "data", payload: {data: "result"}}, {type: "error", payload: {message: "test error"}}]));
 			assert.equal(error.mock.callCount(), 1);
-			assert.equal(error.mock.calls[0].arguments[0], "test error");
+			assert.equal(error.mock.calls[0].arguments[0].message, "test error");
 		});
 	});
 	it("won't start a subscription if it was closed before the connection was established", {}, async () => {
@@ -635,7 +642,7 @@ describe("subscription", () => {
 					}));
 				},
 			});
-			const subs = tester({getAuthorizationHeaders: () => null})(subscriptionQuery, subscriptionVariables).subscribe(({
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).subscribe(({
 				next: (e) => console.log(e),
 			}));
 			await setTimeout(100);
@@ -659,7 +666,7 @@ describe("subscription", () => {
 					sendMessageToSubscription(0, 0, {type: "complete"});
 				},
 			});
-			const subs = tester({getAuthorizationHeaders: () => null, opened})(subscriptionQuery, subscriptionVariables);
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"}), opened})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, []));
 		});
 	});
@@ -677,7 +684,7 @@ describe("persistentSubscription", () => {
 					});
 				},
 			});
-			const subs = persistentSubscription(tester)({closed: (e) => console.log("closed", e), getAuthorizationHeaders: () => null, subscriptionRetryConfig: {maxAttempts: 1}, opened: () => opened.next(undefined), reopenTimeoutOnComplete: 10, reopenTimeoutOnError: 10})(subscriptionQuery, subscriptionVariables).subscribe(() => {});
+			const subs = persistentSubscription(tester)({closed: (e) => console.log("closed", e), getAuthorizationHeaders: () => ({host: "example.com", Authorization: "a"}), subscriptionRetryConfig: {maxAttempts: 1}, opened: () => opened.next(undefined), reopenTimeoutOnComplete: 10, reopenTimeoutOnError: 10})(subscriptionQuery, subscriptionVariables).subscribe(() => {});
 			await firstValueFrom(connections.pipe(skip(2), take(1)));
 			subs.unsubscribe();
 		});
@@ -689,11 +696,11 @@ describe("persistentSubscription", () => {
 				connections,
 				newConnection: async ({connectionNum}) => {
 					opened.pipe(take(1)).subscribe(async () => {
-						sendMessageToConnection(connectionNum, {type: "error"});
+						sendMessageToConnection(connectionNum, {type: "error", payload: {message: "error"}});
 					});
 				},
 			});
-			const subs = persistentSubscription(tester)({closed: (e) => console.log("closed", e), getAuthorizationHeaders: () => null, subscriptionRetryConfig: {maxAttempts: 1}, opened: () => opened.next(undefined), reopenTimeoutOnComplete: 10, reopenTimeoutOnError: 10})(subscriptionQuery, subscriptionVariables).subscribe(() => {});
+			const subs = persistentSubscription(tester)({closed: (e) => console.log("closed", e), getAuthorizationHeaders: () => ({host: "example.com", Authorization: "a"}), subscriptionRetryConfig: {maxAttempts: 1}, opened: () => opened.next(undefined), reopenTimeoutOnComplete: 10, reopenTimeoutOnError: 10})(subscriptionQuery, subscriptionVariables).subscribe(() => {});
 			await firstValueFrom(connections.pipe(skip(2), take(1)));
 			subs.unsubscribe();
 		});

@@ -2,7 +2,6 @@ import {Observable, NEVER, ReplaySubject, pipe} from "rxjs";
 import {webSocket, WebSocketSubject, WebSocketSubjectConfig} from "rxjs/webSocket";
 import {filter, debounceTime, startWith, take, timeout, retry, map, mergeMap, tap, withLatestFrom, first, takeUntil, count, share} from "rxjs/operators";
 import {Buffer} from "buffer";
-import assert from "node:assert/strict";
 
 const crypto = globalThis.crypto;
 
@@ -97,7 +96,9 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 						take(1),
 						tap(() => subscriber.next(ws)),
 						mergeMap((message) => {
-							assert(message.type === "connection_ack");
+							if (message.type !== "connection_ack") {
+								throw new Error("Assertion failed:" + message.type);
+							}
 							return wsMessages
 								.pipe(
 									filter(({type}) => type === "ka"),
@@ -181,7 +182,9 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 						)),
 						filter(({type}) => type === "data"),
 						map((message) => {
-							assert(message.type === "data");
+							if (message.type !== "data") {
+								throw new Error("Assertion failed:" + message.type);
+							}
 							return message.payload;
 						}),
 					)),

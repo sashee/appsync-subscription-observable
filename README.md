@@ -155,7 +155,7 @@ const subscription = connection({
     const req = await signer.sign(httpRequest);
 
     return req.headers;
-  ),
+  }
 });
 
 ```

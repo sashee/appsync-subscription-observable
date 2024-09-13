@@ -124,11 +124,11 @@ import {defaultProvider} from "@aws-sdk/credential-provider-node";
 import {URL} from "url";
 import {Hash} from "@aws-sdk/hash-node";
 
+// IAM authorization needs the region as well
+const {APIURL, apiRegion} = process.env;
+
 const subscription = connection({
   getAuthorizationHeaders: async ({connect, data}) => {
-    // this is the AppSync API URL and region
-    const {APIURL, apiRegion} = process.env;
-    
     const url = new URL(APIURL + (connect ? "/connect" : ""));
     const httpRequest = new HttpRequest({
       body: JSON.stringify(connect ? {} : data),

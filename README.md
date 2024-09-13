@@ -125,7 +125,7 @@ import {URL} from "url";
 import {Hash} from "@aws-sdk/hash-node";
 
 const subscription = connection({
-  getAuthorizationHeaders: async (connect, data) => {
+  getAuthorizationHeaders: async ({connect, data}) => {
     // this is the AppSync API URL and region
     const {APIURL, apiRegion} = process.env;
     

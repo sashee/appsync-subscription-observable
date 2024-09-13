@@ -94,9 +94,9 @@ const connection = appsyncRealtime({APIURL, WebSocketCtor: WebSocket});
 
 #### ```getAuthorizationHeaders``` (required)
 
-A function that gets a ```connect``` and a ```data``` arguments and needs to return an object with the authorization headers.
+A function that gets a ```connect``` (boolean) and a ```data``` ({query, variables}) arguments and needs to return an object with the authorization headers.
 
-The values depend on the authorization mode and documented [here](https://docs.aws.amazon.com/appsync/latest/devguide/real-time-websocket-client.html#header-parameter-format-based-on-appsync-api-authorization-mode).
+The values depend on the authorization mode and are documented [here](https://docs.aws.amazon.com/appsync/latest/devguide/real-time-websocket-client.html#header-parameter-format-based-on-appsync-api-authorization-mode).
 
 Example for API key authorization:
 

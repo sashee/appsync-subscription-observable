@@ -39,9 +39,9 @@ const subscriptionQuery = `subscription MySubscription {
 
 const subscriptionVariables = {};
 
-type ConnectionMessages = {type: "message", message: WebSocketMessages, id?: string} | {type: "error", error?: any, message?: undefined, payload?: string} | {type: "open", id?: string, message?: undefined};
+type ConnectionMessages = {type: "message", message: WebSocketMessages<any>, id?: string} | {type: "error", error?: any, message?: undefined, payload?: string} | {type: "open", id?: string, message?: undefined};
 
-type Connections = {connectionSubject: Subject<ConnectionMessages>, send: (message: WebSocketMessages) => unknown, url: string | undefined, ws: WebSocket};
+type Connections = {connectionSubject: Subject<ConnectionMessages>, send: (message: WebSocketMessages<any>) => unknown, url: string | undefined, ws: WebSocket};
 
 const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (options: {tester: ReturnType<typeof appsyncRealtime>, connections: Subject<Connections>}) => T) => {
 	const port = await getPort();
@@ -64,7 +64,7 @@ const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (o
 		ws.on("open", () => connectionSubject.next({type: "open"}));
 		ws.on("close", () => connectionSubject.complete());
 
-		const send = (message: WebSocketMessages) => {
+		const send = (message: WebSocketMessages<any>) => {
 			debug && (console.log("[tester] ws.send", message));
 			ws.send(JSON.stringify(message));
 		};
@@ -80,7 +80,7 @@ const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (o
 
 	server.listen(port);
 	
-	const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, connectionRetryConfig, WebSocketCtor: WebSocket});
+	const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, connectionRetryConfig});
 
 	try {
 		return await fn({tester, connections});
@@ -99,7 +99,7 @@ type SubscriptionMessagesWithoutId =
 	{type: "error", payload: object}
 
 const handleConnections = ({connections, newConnection, newSubscription, disableAutoAckConnection, disableAutoAckSubscription}: {connections: Observable<Connections>, newConnection?: (options: {url: string | undefined, connectionSubject: Connections["connectionSubject"], connectionNum: number, ws: WebSocket}) => unknown, newSubscription?: (options: {payload: any, connectionNum: number, subscriptionNum: number, id: string}) => unknown, disableAutoAckConnection?: boolean, disableAutoAckSubscription?: boolean}) => {
-	const openConnections = {} as {[connectionNum: number]: {messages: Array<WebSocketMessages> | {push: (...items: WebSocketMessages[]) => unknown}, connectionSubject: Connections["connectionSubject"], subscriptions: {[subscriptionNum: number]: {messages: Array<SubscriptionMessagesWithoutId> | {push: (...items: SubscriptionMessagesWithoutId[]) => unknown}}}}};
+	const openConnections = {} as {[connectionNum: number]: {messages: Array<WebSocketMessages<any>> | {push: (...items: WebSocketMessages<any>[]) => unknown}, connectionSubject: Connections["connectionSubject"], subscriptions: {[subscriptionNum: number]: {messages: Array<SubscriptionMessagesWithoutId> | {push: (...items: SubscriptionMessagesWithoutId[]) => unknown}}}}};
 	let numConnections = 0;
 	connections.pipe(
 	).subscribe(({connectionSubject, send, url, ws}) => {
@@ -123,7 +123,7 @@ const handleConnections = ({connections, newConnection, newSubscription, disable
 				const messageQueue = connectionObj.messages;
 				assert(Array.isArray(messageQueue));
 				connectionObj.messages = {push: (...items) => items.forEach((item) => send(item))};
-				messageQueue.forEach((message: WebSocketMessages) => send(message));
+				messageQueue.forEach((message: WebSocketMessages<any>) => send(message));
 			});
 		}else {
 			if (Array.isArray(connectionObj.messages) && connectionObj.messages.length > 0) {
@@ -153,7 +153,7 @@ const handleConnections = ({connections, newConnection, newSubscription, disable
 		});
 	});
 	return {
-		sendMessageToConnection: (connectionNum: number, message: WebSocketMessages) => {
+		sendMessageToConnection: (connectionNum: number, message: WebSocketMessages<any>) => {
 			openConnections[connectionNum] = openConnections[connectionNum] ?? {messages: [], subscriptions: {}};
 			openConnections[connectionNum].messages.push(message);
 		},
@@ -199,7 +199,7 @@ const equalityCheck = (source: Observable<any>, expected: any[]) => {
 describe("connection", () => {
 	it("emits an error if failed", {}, async () => {
 		const port = await getPort();
-		const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, WebSocketCtor: WebSocket})({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "header"})})(subscriptionQuery, subscriptionVariables);
+		const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`})({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "header"})})(subscriptionQuery, subscriptionVariables);
 
 		assert(await equalityCheck(tester, [{type: "error"}]));
 	});

@@ -1,5 +1,5 @@
 import {Observable, NEVER, ReplaySubject, pipe} from "rxjs";
-import {webSocket, WebSocketSubject, WebSocketSubjectConfig} from "rxjs/webSocket";
+import {webSocket, WebSocketSubject} from "rxjs/webSocket";
 import {filter, debounceTime, startWith, take, timeout, retry, map, mergeMap, tap, withLatestFrom, first, takeUntil, count, share} from "rxjs/operators";
 import {Buffer} from "buffer";
 
@@ -41,9 +41,9 @@ export type AuthHeaders =
 	}
 ;
 
-export type SubscriptionMessages =
+export type SubscriptionMessages<T> =
 	{type: "start_ack", id: string} |
-	{type: "data", id: string, payload: object} |
+	{type: "data", id: string, payload: T} |
 	{type: "complete", id: string} |
 	{type: "error", id: string, payload: object}
 ;
@@ -54,17 +54,17 @@ export type SendingWebSocketMessages =
 	{type: "start", id: string, payload: {data: string, extensions: {authorization: AuthHeaders}}}
 ;
 
-export type WebSocketMessages =
+export type WebSocketMessages<T> =
 	{type: "connection_ack", payload: {connectionTimeoutMs: number}} |
 	{type: "ka"} |
 	{type: "error", payload: object}
-| SubscriptionMessages
+| SubscriptionMessages<T>
 | SendingWebSocketMessages
 ;
 
 type getAuthorizationHeaders = (args: {connect: boolean, data: {query?: string, variables?: {[name: string]: string}}}) => AuthHeaders | Promise<AuthHeaders>;
 
-export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebSocketCtor}: {APIURL: string, connectionRetryConfig?: RetryConfig, closeDelay?: number, WebSocketCtor: WebSocketSubjectConfig<unknown>["WebSocketCtor"]}) => {
+export const appsyncRealtime = <T> ({APIURL, connectionRetryConfig, closeDelay}: {APIURL: string, connectionRetryConfig?: RetryConfig, closeDelay?: number}) => {
 	// https://github.com/aws-amplify/amplify-js/blob/4988d51a6ffa1215a413c19c80f39a035eb42512/packages/pubsub/src/Providers/AWSAppSyncRealTimeProvider/index.ts#L70
 	const standardDomainPattern = /^https:\/\/\w{26}\.appsync-api\.\w{2}(?:(?:-\w{2,})+)-\d\.amazonaws.com\/graphql$/i;
 	const realtimeUrl = APIURL.match(standardDomainPattern) ?
@@ -77,13 +77,12 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 		startWith(undefined),
 		withLatestFrom(getAuthorizationHeadersSubject),
 		mergeMap(([, fn]) => Promise.resolve(fn({connect: true, data: {}}))),
-		(observable) => new Observable<WebSocketSubject<WebSocketMessages>>((subscriber) => {
+		(observable) => new Observable<WebSocketSubject<WebSocketMessages<T>>>((subscriber) => {
 			const subscription = observable.subscribe({
 				next: (authHeaders) => {
-					const ws = webSocket<WebSocketMessages>({
+					const ws = webSocket<WebSocketMessages<T>>({
 						url: `wss://${new URL(realtimeUrl).host}${new URL(realtimeUrl).pathname}?header=${Buffer.from(JSON.stringify(authHeaders), "utf8").toString("base64")}&payload=${Buffer.from(JSON.stringify({}), "utf8").toString("base64")}`,
 						protocol: "graphql-ws",
-						WebSocketCtor: WebSocketCtor ?? WebSocket,
 						openObserver: ({next: () => {
 							ws.next({type: "connection_init"});
 						}}),
@@ -125,12 +124,12 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 		}),
 	);
 
-	return ({getAuthorizationHeaders, opened, subscriptionRetryConfig}: {getAuthorizationHeaders: getAuthorizationHeaders, opened?: () => void, subscriptionRetryConfig?: RetryConfig}) => (query: string, variables: {[name: string]: string}) => new Observable<object>((observer) => {
+	return ({getAuthorizationHeaders, opened, subscriptionRetryConfig}: {getAuthorizationHeaders: getAuthorizationHeaders, opened?: () => void, subscriptionRetryConfig?: RetryConfig}) => (query: string, variables: {[name: string]: string}) => new Observable<T>((observer) => {
 		getAuthorizationHeadersSubject.next(getAuthorizationHeaders);
 		const subscriptionId = crypto.randomUUID();
 		const subscription = websockets.pipe(
 			exponentialBackoffWithJitter({base: connectionRetryConfig?.base ?? 10, cap: connectionRetryConfig?.cap ?? 2000, maxAttempts: connectionRetryConfig?.maxAttempts ?? 5, timeout: connectionRetryConfig?.timeout ?? 5000}),
-			(observable) => new Observable<[ws: WebSocketSubject<WebSocketMessages>, authHeaders: AuthHeaders]>((subscriber) => {
+			(observable) => new Observable<[ws: WebSocketSubject<WebSocketMessages<T>>, authHeaders: AuthHeaders]>((subscriber) => {
 				const subscription = observable.subscribe({
 					next: (ws) => {
 						Promise.resolve(getAuthorizationHeaders({connect: false, data: {query, variables}})).then(
@@ -199,7 +198,7 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay, WebS
 	});
 };
 
-export const persistentSubscription = (connection: ReturnType<typeof appsyncRealtime>) => ({getAuthorizationHeaders, subscriptionRetryConfig, opened, closed, reopenTimeoutOnError, reopenTimeoutOnComplete}: {getAuthorizationHeaders: getAuthorizationHeaders, subscriptionRetryConfig: RetryConfig, opened: () => unknown, closed: (error?: any) => unknown, reopenTimeoutOnError: number, reopenTimeoutOnComplete: number}) => (query: string, variables: {[name: string]: string}) => new Observable((subscriber) => {
+export const persistentSubscription = <T> (connection: ReturnType<typeof appsyncRealtime<T>>) => ({getAuthorizationHeaders, subscriptionRetryConfig, opened, closed, reopenTimeoutOnError, reopenTimeoutOnComplete}: {getAuthorizationHeaders: getAuthorizationHeaders, subscriptionRetryConfig?: RetryConfig, opened?: () => unknown, closed?: (error?: any) => unknown, reopenTimeoutOnError?: number, reopenTimeoutOnComplete?: number}) => (query: string, variables: {[name: string]: string}) => new Observable<T>((subscriber) => {
 	const subscription = connection({getAuthorizationHeaders, subscriptionRetryConfig, opened})(query, variables)
 		.pipe(
 			tap({

@@ -80,16 +80,6 @@ await firstValueFrom(connection(config)(query1, variables1));
 await firstValueFrom(connection(config)(query2, variables2));
 ```
 
-#### ```WebSocketCtor```
-
-The WebSocket to use. Useful if there is no global WebSocket object (such as in NodeJS)
-
-```
-import WebSocket from "ws":
-
-const connection = appsyncRealtime({APIURL, WebSocketCtor: WebSocket});
-```
-
 ### Subscription
 
 #### ```getAuthorizationHeaders``` (required)

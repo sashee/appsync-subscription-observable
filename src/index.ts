@@ -1,4 +1,4 @@
-import {Observable, NEVER, ReplaySubject, pipe} from "rxjs";
+import {Observable, NEVER, ReplaySubject, pipe, timer} from "rxjs";
 import {webSocket, WebSocketSubject} from "rxjs/webSocket";
 import {filter, debounceTime, startWith, take, timeout, retry, map, mergeMap, tap, withLatestFrom, first, takeUntil, count, share} from "rxjs/operators";
 import {Buffer} from "buffer";
@@ -119,7 +119,7 @@ export const appsyncRealtime = ({APIURL, connectionRetryConfig, closeDelay}: {AP
 		share({
 			connector: () => new ReplaySubject(),
 			resetOnComplete: true,
-			resetOnRefCountZero: closeDelay ? () => [closeDelay] : true,
+			resetOnRefCountZero: closeDelay ? () => timer(closeDelay) : true,
 			resetOnError: true,
 		}),
 	);

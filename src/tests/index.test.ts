@@ -1,4 +1,5 @@
-import { AuthHeaders, RetryConfig, WebSocketMessages, appsyncRealtime, persistentSubscription } from "../index.js";
+import { appsyncRealtime, persistentSubscription } from "../index.ts";
+import type { AuthHeaders, RetryConfig, WebSocketMessages} from "../index.ts";
 import {WebSocketServer} from "ws";
 import {createServer} from "node:https";
 import getPort from "get-port";
@@ -43,7 +44,7 @@ type ConnectionMessages = {type: "message", message: WebSocketMessages<any>, id?
 
 type Connections = {connectionSubject: Subject<ConnectionMessages>, send: (message: WebSocketMessages<any>) => unknown, url: string | undefined, ws: WebSocket};
 
-const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (options: {tester: ReturnType<typeof appsyncRealtime>, connections: Subject<Connections>}) => T) => {
+const withTestSetup = <T> (connectionRetryConfig?: RetryConfig, closeDelay?: number) => async (fn: (options: {tester: ReturnType<typeof appsyncRealtime>, connections: Subject<Connections>}) => T) => {
 	const port = await getPort();
 
 	const cert = generateCert({altNameIPs: ["127.0.0.1"], validityDays: 2});
@@ -80,7 +81,7 @@ const withTestSetup = <T> (connectionRetryConfig?: RetryConfig) => async (fn: (o
 
 	server.listen(port);
 	
-	const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, connectionRetryConfig});
+	const tester = appsyncRealtime({APIURL: `https://127.0.0.1:${port}`, connectionRetryConfig, closeDelay});
 
 	try {
 		return await fn({tester, connections});
@@ -668,6 +669,40 @@ describe("subscription", () => {
 			});
 			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"}), opened})(subscriptionQuery, subscriptionVariables);
 			assert(await equalityCheck(subs, []));
+		});
+	});
+	it("keeps the connection open for closeDelay ms after last unsubscribe", {}, async () => {
+		const closeDelay = 200;
+		await withTestSetup(undefined, closeDelay)(async ({tester, connections}) => {
+			let connectionClosed = false;
+			const {waitForSubscription, sendMessageToSubscription} = handleConnections({
+				connections,
+				newConnection: ({connectionSubject}) => {
+					connectionSubject.subscribe({
+						complete: () => {
+							connectionClosed = true;
+						},
+					});
+				},
+			});
+			const subs = tester({getAuthorizationHeaders: () => ({host: "example.com", Authorization: "test"})})(subscriptionQuery, subscriptionVariables).subscribe(() => {});
+			await waitForSubscription(0, 0);
+			sendMessageToSubscription(0, 0, {type: "data", payload: {data: "result"}});
+			
+			// Unsubscribe from the subscription
+			subs.unsubscribe();
+			
+			// Connection should still be open immediately after unsubscribe
+			await setTimeout(50);
+			assert.equal(connectionClosed, false, "Connection should still be open after 50ms");
+			
+			// Connection should still be open before closeDelay expires
+			await setTimeout(100);
+			assert.equal(connectionClosed, false, "Connection should still be open after 150ms");
+			
+			// Connection should be closed after closeDelay expires
+			await setTimeout(100);
+			assert.equal(connectionClosed, true, "Connection should be closed after closeDelay (200ms)");
 		});
 	});
 });
